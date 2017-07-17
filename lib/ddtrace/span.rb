@@ -17,8 +17,10 @@ module Datadog
     attr_accessor :name, :service, :resource, :span_type,
                   :start_time, :end_time,
                   :span_id, :trace_id, :parent_id,
-                  :status, :parent, :sampled,
+                  :status, :sampled,
                   :tracer, :context
+
+    attr_reader :parent
 
     # Create a new span linked to the given tracer. Call the \Tracer method <tt>start_span()</tt>
     # and then <tt>finish()</tt> once the tracer operation is over.
@@ -146,9 +148,14 @@ module Datadog
       "Span(name:#{@name},sid:#{@span_id},tid:#{@trace_id},pid:#{@parent_id})"
     end
 
+    # DEPRECATED: remove this function in the next release, replaced by ``parent=``
+    def set_parent(parent)
+      self.parent = parent
+    end
+
     # Set this span's parent, inheriting any properties not explicitly set.
     # If the parent is nil, set the span zero values.
-    def set_parent(parent)
+    def parent=(parent)
       @parent = parent
 
       if parent.nil?
@@ -158,6 +165,7 @@ module Datadog
         @trace_id = parent.trace_id
         @parent_id = parent.span_id
         @service ||= parent.service
+        @sampled = parent.sampled
       end
     end
 
