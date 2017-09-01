@@ -35,14 +35,9 @@ module Datadog
     # Override the default logger with a custom one.
     def self.log=(logger)
       return unless logger
-      return unless logger.respond_to? :methods
-      return unless logger.respond_to? :error
-      if logger.respond_to? :methods
-        unimplemented = Logger.new(STDOUT).methods - logger.methods
-        unless unimplemented.empty?
-          logger.error("logger #{logger} does not implement #{unimplemented}")
-          return
-        end
+      unless %i(debug info warn error).all? { |m| logger.respond_to?(m) }
+        warn("logger #{logger} does not implement debug, info, warn, and error")
+        return
       end
       @logger = logger
     end

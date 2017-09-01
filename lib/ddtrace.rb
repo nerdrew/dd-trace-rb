@@ -36,19 +36,13 @@ if defined?(Rails::VERSION)
       module Datadog
         # Railtie class initializes
         class Railtie < Rails::Railtie
-          config.app_middleware.use(Datadog::Contrib::Rails::ExceptionMiddleware)
-
           # auto instrument Rails and third party components after
           # the framework initialization
-          options = {}
           config.after_initialize do |app|
-            Datadog::Contrib::Rails::Framework.configure(config: app.config)
-            Datadog::Contrib::Rails::Framework.auto_instrument()
-            Datadog::Contrib::Rails::Framework.auto_instrument_redis()
-            Datadog::Contrib::Rails::Framework.auto_instrument_grape()
-
-            # override Rack Middleware configurations with Rails
-            options.update(::Rails.configuration.datadog_trace)
+            Datadog::Contrib::Rails::Framework.configure(app.config.datadog_trace)
+            Datadog::Contrib::Rails::Framework.auto_instrument(app.config.datadog_trace)
+            Datadog::Contrib::Rails::Framework.auto_instrument_redis(app.config.datadog_trace)
+            Datadog::Contrib::Rails::Framework.auto_instrument_grape(app.config.datadog_trace)
           end
 
           # Configure datadog settings before building the middleware stack.
@@ -56,8 +50,12 @@ if defined?(Rails::VERSION)
           # the initialization and so it's too late to add our tracing
           # functionalities.
           initializer :datadog_config, before: :build_middleware_stack do |app|
+            next unless app.config.datadog_trace[:auto_instrument_rack]
+
+            app.config.app_middleware.use(Datadog::Contrib::Rails::ExceptionMiddleware)
+
             app.config.middleware.insert_before(
-              0, Datadog::Contrib::Rack::TraceMiddleware, options
+              0, Datadog::Contrib::Rack::TraceMiddleware, app.config.datadog_trace
             )
           end
         end

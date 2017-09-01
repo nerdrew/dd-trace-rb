@@ -3,7 +3,6 @@
 module Datadog
   module Contrib
     module Redis
-      SERVICE = 'redis'.freeze
       DRIVER = 'redis.driver'.freeze
 
       # Patcher enables patching of 'redis' module.
@@ -11,10 +10,14 @@ module Datadog
       module Patcher
         @patched = false
 
+        class <<self
+          attr_reader :default_service
+        end
+
         module_function
 
         # patch applies our patch if needed
-        def patch
+        def patch(config)
           if !@patched && (defined?(::Redis::VERSION) && \
                            Gem::Version.new(::Redis::VERSION) >= Gem::Version.new('3.0.0'))
             begin
@@ -27,6 +30,7 @@ module Datadog
               patch_redis()
               patch_redis_client()
 
+              @default_service = config[:default_redis_service] || "redis"
               @patched = true
             rescue StandardError => e
               Datadog::Tracer.log.error("Unable to apply Redis integration: #{e}")
@@ -59,7 +63,7 @@ module Datadog
             end
 
             def initialize(*args)
-              pin = Datadog::Pin.new(SERVICE, app: 'redis', app_type: Datadog::Ext::AppTypes::DB)
+              pin = Datadog::Pin.new(Patcher.default_service, app: 'redis', app_type: Datadog::Ext::AppTypes::DB)
               pin.onto(self)
               if pin.tracer && pin.service
                 pin.tracer.set_service_info(pin.service, pin.app, pin.app_type)
@@ -75,9 +79,15 @@ module Datadog
 
               response = nil
               pin.tracer.trace('redis.command') do |span|
-                span.service = pin.service
+                span.service = "#{pin.service}-#{host}"
                 span.span_type = Datadog::Ext::Redis::TYPE
-                span.resource = Datadog::Contrib::Redis::Quantize.format_command_args(*args)
+                span.resource = Datadog::Contrib::Redis::Quantize.format_command_args(*args).tap do |res|
+                  if res.blank?
+                    Datadog::Tracer.log.debug do
+                      "unknown redis.command call args=#{args.inspect} caller=#{caller.inspect}"
+                    end
+                  end
+                end
                 Datadog::Contrib::Redis::Tags.set_common_tags(self, span)
 
                 response = call_without_datadog(*args, &block)
@@ -86,21 +96,26 @@ module Datadog
               response
             end
 
-            alias_method :call_pipeline_without_datadog, :call_pipeline
-            remove_method :call_pipeline
-            def call_pipeline(*args, &block)
+            alias_method :call_pipelined_without_datadog, :call_pipelined
+            remove_method :call_pipelined
+            def call_pipelined(commands)
               pin = Datadog::Pin.get_from(self)
-              return call_pipeline_without_datadog(*args, &block) unless pin && pin.tracer
+              return call_pipelined_without_datadog(commands) unless pin && pin.tracer && !commands.empty?
 
               response = nil
               pin.tracer.trace('redis.command') do |span|
-                span.service = pin.service
+                span.service = "#{pin.service}-#{host}"
                 span.span_type = Datadog::Ext::Redis::TYPE
-                commands = args[0].commands.map { |c| Datadog::Contrib::Redis::Quantize.format_command_args(c) }
-                span.resource = commands.join("\n")
+                span.resource = commands.map { |c| Datadog::Contrib::Redis::Quantize.format_command_args(c) }.join("\n").tap do |res|
+                  if res.blank?
+                    Datadog::Tracer.log.debug do
+                      "unknown redis.command call_pipelined commands=#{commands.inspect} caller=#{caller.inspect}"
+                    end
+                  end
+                end
                 Datadog::Contrib::Redis::Tags.set_common_tags(self, span)
 
-                response = call_pipeline_without_datadog(*args, &block)
+                response = call_pipelined_without_datadog(commands)
               end
 
               response

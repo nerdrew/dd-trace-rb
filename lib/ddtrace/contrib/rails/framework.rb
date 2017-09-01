@@ -38,6 +38,7 @@ module Datadog
           auto_instrument: false,
           auto_instrument_redis: false,
           auto_instrument_grape: false,
+          auto_instrument_rack: true,
           default_service: 'rails-app',
           default_controller_service: 'rails-controller',
           default_cache_service: 'rails-cache',
@@ -53,10 +54,9 @@ module Datadog
 
         # configure Datadog settings
         # rubocop:disable Metrics/MethodLength
-        def self.configure(config)
+        def self.configure(user_config)
           # tracer defaults
           # merge default configurations with users settings
-          user_config = config[:config].datadog_trace rescue {}
           datadog_config = DEFAULT_CONFIG.merge(user_config)
           datadog_config[:tracer].enabled = datadog_config[:enabled]
 
@@ -118,12 +118,12 @@ module Datadog
           ::Rails.configuration.datadog_trace = datadog_config
         end
 
-        def self.auto_instrument_redis
-          return unless ::Rails.configuration.datadog_trace[:auto_instrument_redis]
+        def self.auto_instrument_redis(config)
+          return unless config[:auto_instrument_redis]
           Datadog::Tracer.log.debug('Enabling auto-instrumentation for Redis client')
 
           # patch the Redis library and reload the CacheStore if it was using Redis
-          Datadog::Monkey.patch_module(:redis)
+          Datadog::Monkey.patch_module(:redis, config)
 
           # reload the cache store if it's available and it's using Redis
           return unless defined?(::ActiveSupport::Cache::RedisStore) &&
@@ -141,8 +141,8 @@ module Datadog
           end
         end
 
-        def self.auto_instrument_grape
-          return unless ::Rails.configuration.datadog_trace[:auto_instrument_grape]
+        def self.auto_instrument_grape(config)
+          return unless config[:auto_instrument_grape]
 
           # patch the Grape library so that endpoints are traced
           Datadog::Monkey.patch_module(:grape)
@@ -150,19 +150,19 @@ module Datadog
           # update the Grape pin object
           pin = Datadog::Pin.get_from(::Grape)
           return unless pin && pin.enabled?
-          pin.tracer = ::Rails.configuration.datadog_trace[:tracer]
-          pin.service = ::Rails.configuration.datadog_trace[:default_grape_service]
+          pin.tracer = config[:tracer]
+          pin.service = config[:default_grape_service]
         end
 
         # automatically instrument all Rails component
-        def self.auto_instrument
-          return unless ::Rails.configuration.datadog_trace[:auto_instrument]
+        def self.auto_instrument(config)
+          return unless config[:auto_instrument]
           Datadog::Tracer.log.debug('Enabling auto-instrumentation for core components')
 
           # instrumenting Rails framework
-          Datadog::Contrib::Rails::ActionController.instrument()
+          Datadog::Contrib::Rails::ActionController.instrument(config)
           Datadog::Contrib::Rails::ActionView.instrument()
-          Datadog::Contrib::Rails::ActiveRecord.instrument()
+          Datadog::Contrib::Rails::ActiveRecord.instrument(config)
           Datadog::Contrib::Rails::ActiveSupport.instrument()
         end
       end
