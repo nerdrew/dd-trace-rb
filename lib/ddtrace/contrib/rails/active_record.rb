@@ -7,10 +7,11 @@ module Datadog
     module Rails
       # Code used to create and handle 'mysql.query', 'postgres.query', ... spans.
       module ActiveRecord
-        def self.instrument
+        def self.instrument(config)
           # ActiveRecord is instrumented only if it's available
           return unless defined?(::ActiveRecord)
 
+          @config = config
           # subscribe when the active record query has been processed
           ::ActiveSupport::Notifications.subscribe('sql.active_record') do |*args|
             sql(*args)
@@ -18,17 +19,19 @@ module Datadog
         end
 
         def self.sql(_name, start, finish, _id, payload)
-          tracer = ::Rails.configuration.datadog_trace.fetch(:tracer)
-          database_service = ::Rails.configuration.datadog_trace.fetch(:default_database_service)
+          tracer = @config.fetch(:tracer)
+          database_service = if (host = payload[:host])
+            "#{@config.fetch(:default_database_service)}-#{host}"
+          else
+            @config.fetch(:default_database_service)
+          end
           adapter_name = ::ActiveRecord::Base.connection_config[:adapter]
-          adapter_name = Datadog::Contrib::Rails::Utils.normalize_vendor(adapter_name)
-          span_type = Datadog::Ext::SQL::TYPE
+          adapter_name = ::Datadog::Contrib::Rails::Utils.normalize_vendor(adapter_name)
 
           span = tracer.trace(
             "#{adapter_name}.query",
             resource: payload.fetch(:sql),
             service: database_service,
-            span_type: span_type
           )
 
           # find out if the SQL query has been cached in this request. This meta is really
@@ -42,7 +45,7 @@ module Datadog
           # the span should have the query ONLY in the Resource attribute,
           # so that the ``sql.query`` tag will be set in the agent with an
           # obfuscated version
-          span.span_type = Datadog::Ext::SQL::TYPE
+          span.span_type = ::Datadog::Ext::SQL::TYPE
           span.set_tag('rails.db.vendor', adapter_name)
           span.set_tag('rails.db.cached', cached) if cached
           span.start_time = start
